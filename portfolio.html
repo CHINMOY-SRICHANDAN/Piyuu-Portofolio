@@ -579,7 +579,7 @@
             display: flex;
             gap: 48px;
             width: max-content;
-            animation: marqueeScroll 35s linear infinite;
+            animation: marqueeScroll 55s linear infinite;
             will-change: transform;
         }
 
@@ -1590,31 +1590,33 @@
                         </div>
                         {/* Center composition */}
                         <div className="flex flex-col items-center relative">
-                            <div className="hero-creative reveal visible d1 -mb-4" style={{ transform: 'rotate(-5deg)' }}>Creative</div>
                             <div className="relative flex items-center justify-center">
                                 <span className="hero-portfolio reveal visible d2">PORT</span>
-                                {/* Photo */}
-                                <div className="hero-photo-container mx-[-20px] reveal-scale visible d3 rounded-b-[40%] overflow-hidden">
-                                    {photo ? (
-                                        <Fragment>
-                                            <img src={photo.url} alt="Creator portrait" />
-                                            {isAdmin && <button onClick={() => dispatch({ type: 'REMOVE_FILE', cat: 'profilePhoto', idx: 0 })}
-                                                className="absolute top-3 right-3 w-8 h-8 rounded-full bg-white/80 flex items-center justify-center text-charcoal hover:bg-red-400 hover:text-white transition-all shadow-lg z-10"
-                                                aria-label="Remove photo"><I.X /></button>}
-                                        </Fragment>
-                                    ) : isAdmin ? (
-                                        <div className="w-full h-full bg-cream-dark flex flex-col items-center justify-center gap-2 cursor-pointer"
-                                            onClick={() => document.getElementById('hero-upload').click()}>
-                                            <div className="w-10 h-10 rounded-full bg-pink-light flex items-center justify-center text-pink-deep"><I.Upload /></div>
-                                            <p className="text-xs text-warm-gray">Upload Photo</p>
-                                            <input id="hero-upload" type="file" className="hidden" accept="image/*"
-                                                onChange={e => { if (e.target.files[0]) handleSinglePhotoUpload(e.target.files[0], 'profilePhoto', dispatch); }} />
-                                        </div>
-                                    ) : (
-                                        <div className="w-full h-full bg-gradient-to-b from-cream-dark to-pink-light/30 flex items-center justify-center">
-                                            <div className="w-20 h-20 rounded-full bg-pink-light/60" />
-                                        </div>
-                                    )}
+                                {/* Photo with Creative precisely aligned to its top center */}
+                                <div className="relative mx-[-20px] z-10 flex flex-col items-center">
+                                    <div className="hero-creative reveal visible d1 absolute -top-10 md:-top-14 left-1/2 -translate-x-1/2 z-20 pointer-events-none whitespace-nowrap" style={{ transform: 'translateX(-50%) rotate(-4deg)' }}>Creative</div>
+                                    <div className="hero-photo-container reveal-scale visible d3 rounded-b-[40%] overflow-hidden">
+                                        {photo ? (
+                                            <Fragment>
+                                                <img src={photo.url} alt="Creator portrait" />
+                                                {isAdmin && <button onClick={() => dispatch({ type: 'REMOVE_FILE', cat: 'profilePhoto', idx: 0 })}
+                                                    className="absolute top-3 right-3 w-8 h-8 rounded-full bg-white/80 flex items-center justify-center text-charcoal hover:bg-red-400 hover:text-white transition-all shadow-lg z-10"
+                                                    aria-label="Remove photo"><I.X /></button>}
+                                            </Fragment>
+                                        ) : isAdmin ? (
+                                            <div className="w-full h-full bg-cream-dark flex flex-col items-center justify-center gap-2 cursor-pointer"
+                                                onClick={() => document.getElementById('hero-upload').click()}>
+                                                <div className="w-10 h-10 rounded-full bg-pink-light flex items-center justify-center text-pink-deep"><I.Upload /></div>
+                                                <p className="text-xs text-warm-gray">Upload Photo</p>
+                                                <input id="hero-upload" type="file" className="hidden" accept="image/*"
+                                                    onChange={e => { if (e.target.files[0]) handleSinglePhotoUpload(e.target.files[0], 'profilePhoto', dispatch); }} />
+                                            </div>
+                                        ) : (
+                                            <div className="w-full h-full bg-gradient-to-b from-cream-dark to-pink-light/30 flex items-center justify-center">
+                                                <div className="w-20 h-20 rounded-full bg-pink-light/60" />
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                                 <span className="hero-portfolio reveal visible d2">FOLIO</span>
                             </div>
@@ -2504,7 +2506,7 @@
             const [loginPass, setLoginPass] = useState('');
             const [loginError, setLoginError] = useState(false);
             const [syncStatus, setSyncStatus] = useState('connecting'); // 'connecting' | 'synced' | 'saving' | 'offline'
-            const ADMIN_PASS = 'priya2026';
+            const ADMIN_PASS = 'priya@7777';
 
             const [uploads, dispatch] = useReducer(reducer, {
                 bio: '', profilePhoto: [], deals: [], gallery: [], photos: [], socials: DEFAULT_STATE.socials, photoCategories: DEFAULT_STATE.photoCategories
