@@ -1091,51 +1091,91 @@
             });
         }
 
-        function uploadFileToFirebase(file, onProgress) {
-            if (!firebaseStorage) {
-                return new Promise(resolve => {
+        function compressImage(file, maxWidth = 1200, quality = 0.8) {
+            return new Promise((resolve) => {
+                if (!file.type || !file.type.startsWith('image/')) {
                     const r = new FileReader();
                     r.onload = e => resolve({ name: file.name, size: file.size, type: file.type, url: e.target.result });
                     r.readAsDataURL(file);
-                });
+                    return;
+                }
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        let { width, height } = img;
+                        if (width > maxWidth || height > maxWidth) {
+                            if (width > height) {
+                                height = Math.round((height * maxWidth) / width);
+                                width = maxWidth;
+                            } else {
+                                width = Math.round((width * maxWidth) / height);
+                                height = maxWidth;
+                            }
+                        }
+                        const canvas = document.createElement('canvas');
+                        canvas.width = width;
+                        canvas.height = height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, width, height);
+                        const compressed = canvas.toDataURL('image/jpeg', quality);
+                        resolve({
+                            name: file.name,
+                            size: Math.round(compressed.length * 0.75),
+                            type: 'image/jpeg',
+                            url: compressed
+                        });
+                    };
+                    img.onerror = () => {
+                        resolve({ name: file.name, size: file.size, type: file.type, url: e.target.result });
+                    };
+                    img.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        function uploadFileToFirebase(file, onProgress) {
+            // If Storage bucket is available and enabled
+            if (firebaseStorage && firebaseConfig.storageBucket) {
+                try {
+                    const cleanName = (file.name || 'upload').replace(/[^a-zA-Z0-9._-]/g, '_');
+                    const fileRef = firebaseStorage.ref().child(`uploads/${Date.now()}_${cleanName}`);
+                    const uploadTask = fileRef.put(file);
+
+                    return new Promise((resolve) => {
+                        uploadTask.on(
+                            'state_changed',
+                            snapshot => {
+                                if (snapshot.totalBytes > 0 && onProgress) {
+                                    const pct = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+                                    onProgress(pct);
+                                }
+                            },
+                            error => {
+                                console.log("Storage bucket unavailable, using optimized in-database compression:", error.message || error);
+                                compressImage(file).then(resolve);
+                            },
+                            () => {
+                                uploadTask.snapshot.ref.getDownloadURL().then(downloadURL => {
+                                    resolve({
+                                        name: file.name,
+                                        size: file.size,
+                                        type: file.type,
+                                        url: downloadURL
+                                    });
+                                }).catch(() => compressImage(file).then(resolve));
+                            }
+                        );
+                    });
+                } catch (e) {
+                    return compressImage(file);
+                }
             }
 
-            const cleanName = (file.name || 'upload').replace(/[^a-zA-Z0-9._-]/g, '_');
-            const fileRef = firebaseStorage.ref().child(`uploads/${Date.now()}_${cleanName}`);
-            const uploadTask = fileRef.put(file);
-
-            return new Promise((resolve) => {
-                uploadTask.on(
-                    'state_changed',
-                    snapshot => {
-                        if (snapshot.totalBytes > 0 && onProgress) {
-                            const pct = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-                            onProgress(pct);
-                        }
-                    },
-                    error => {
-                        console.warn("Firebase Storage upload fallback:", error);
-                        const r = new FileReader();
-                        r.onload = e => resolve({ name: file.name, size: file.size, type: file.type, url: e.target.result });
-                        r.readAsDataURL(file);
-                    },
-                    () => {
-                        uploadTask.snapshot.ref.getDownloadURL().then(downloadURL => {
-                            resolve({
-                                name: file.name,
-                                size: file.size,
-                                type: file.type,
-                                url: downloadURL
-                            });
-                        }).catch(err => {
-                            console.warn("Download URL error, falling back to local:", err);
-                            const r = new FileReader();
-                            r.onload = e => resolve({ name: file.name, size: file.size, type: file.type, url: e.target.result });
-                            r.readAsDataURL(file);
-                        });
-                    }
-                );
-            });
+            // High performance compressed fallback (100% free with Firestore)
+            if (onProgress) onProgress(100);
+            return compressImage(file);
         }
 
         function handleSinglePhotoUpload(file, cat, dispatch) {
@@ -1144,9 +1184,9 @@
                 dispatch({ type: 'ADD_FILES', cat, files: [item] });
             }).catch(err => {
                 console.error("Single photo upload error:", err);
-                const r = new FileReader();
-                r.onload = ev => dispatch({ type: 'ADD_FILES', cat, files: [{ name: file.name, size: file.size, type: file.type, url: ev.target.result }] });
-                r.readAsDataURL(file);
+                compressImage(file).then(item => {
+                    dispatch({ type: 'ADD_FILES', cat, files: [item] });
+                });
             });
         }
 
