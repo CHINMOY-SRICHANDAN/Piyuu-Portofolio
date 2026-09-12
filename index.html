@@ -1445,6 +1445,11 @@
                 const ok = ['image/', 'video/'];
                 const files = Array.from(fList).filter(f => ok.some(t => f.type.startsWith(t)));
                 if (!files.length) return;
+                const largeVideo = files.find(f => f.type.startsWith('video/') && f.size > 1.2 * 1024 * 1024);
+                if (largeVideo) {
+                    alert(`"${largeVideo.name}" is ${(largeVideo.size / (1024 * 1024)).toFixed(1)}MB.\n\nDirect database uploads are limited to ~1MB. Please use the "+ Add Video by URL" button to embed your video via link (YouTube, Vimeo, Cloudinary, direct MP4) with zero size limits!`);
+                    return;
+                }
                 setUploading(true); setProgress(5);
                 try {
                     const totalFiles = files.length;
@@ -1928,12 +1933,80 @@
             );
         }
         /* ====== PORTFOLIO GALLERY ====== */
+        function getVideoInfo(url) {
+            if (!url) return { type: 'unknown', embedUrl: '', defaultThumb: '' };
+            const trimmed = url.trim();
+            // YouTube (standard, share link, embed, shorts)
+            const ytMatch = trimmed.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/))([\w-]{11})/i);
+            if (ytMatch) {
+                return {
+                    type: 'youtube',
+                    id: ytMatch[1],
+                    embedUrl: `https://www.youtube-nocookie.com/embed/${ytMatch[1]}?autoplay=1&rel=0`,
+                    defaultThumb: `https://img.youtube.com/vi/${ytMatch[1]}/hqdefault.jpg`
+                };
+            }
+            // Vimeo
+            const vimeoMatch = trimmed.match(/vimeo\.com\/(?:video\/)?([0-9]+)/i);
+            if (vimeoMatch) {
+                return {
+                    type: 'vimeo',
+                    id: vimeoMatch[1],
+                    embedUrl: `https://player.vimeo.com/video/${vimeoMatch[1]}?autoplay=1`,
+                    defaultThumb: ''
+                };
+            }
+            // Direct video (mp4, webm, mov, etc.)
+            return {
+                type: 'video',
+                id: '',
+                embedUrl: trimmed,
+                defaultThumb: ''
+            };
+        }
+
         function Portfolio({ uploads, dispatch, isAdmin }) {
             const [tab, setTab] = useState('All');
             const [lb, setLb] = useState(null);
+            const [showVideoModal, setShowVideoModal] = useState(false);
+            const [videoForm, setVideoForm] = useState({
+                title: '',
+                url: '',
+                category: 'Reels',
+                thumbnail: ''
+            });
+            const [videoError, setVideoError] = useState('');
+
             const tabs = ['All', 'Reels', 'Photos', 'Reviews', 'Tutorials'];
             const r1 = useReveal();
             const files = (uploads.gallery || []).filter(f => tab === 'All' || f.category === tab);
+
+            const handleAddVideo = (e) => {
+                e.preventDefault();
+                const trimmedUrl = videoForm.url.trim();
+                if (!trimmedUrl) {
+                    setVideoError('Please enter a valid video link.');
+                    return;
+                }
+                const info = getVideoInfo(trimmedUrl);
+                const title = videoForm.title.trim() || (info.type === 'youtube' ? 'YouTube Reel' : 'UGC Video Reel');
+                const thumb = videoForm.thumbnail.trim() || info.defaultThumb || '';
+
+                const newVideoItem = {
+                    name: title,
+                    category: videoForm.category || 'Reels',
+                    type: info.type === 'youtube' ? 'video/youtube' : (info.type === 'vimeo' ? 'video/vimeo' : 'video/mp4'),
+                    url: trimmedUrl,
+                    embedUrl: info.embedUrl,
+                    thumbnail: thumb
+                };
+
+                dispatch({ type: 'ADD_FILES', cat: 'gallery', files: [newVideoItem] });
+                setVideoForm({ title: '', url: '', category: 'Reels', thumbnail: '' });
+                setVideoError('');
+                setShowVideoModal(false);
+            };
+
             return (
                 <section id="portfolio" className="py-24 md:py-32 px-6 bg-dot-pattern">
                     <div className="max-w-7xl mx-auto">
@@ -1949,77 +2022,206 @@
                         {/* Grid */}
                         {files.length > 0 ? (
                             <div className="masonry-grid">
-                                {files.map((f, i) => (
-                                    <div key={i} className="card group cursor-pointer relative" onClick={() => setLb(i)}>
-                                        <div className="relative overflow-hidden" style={{ paddingTop: `${[75, 100, 60, 80, 120, 66][i % 6]}%` }}>
-                                            {f.type.startsWith('video/') ? (
-                                                <video src={f.url} className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" muted />
-                                            ) : (
-                                                <img src={f.url} alt={f.name} className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" loading="lazy" />
+                                {files.map((f, i) => {
+                                    const isVid = (f.type && f.type.startsWith('video/')) || (typeof f.url === 'string' && f.url.match(/\.(mp4|webm|mov|ogg)(\?.*)?$/i)) || f.type === 'video/youtube' || f.type === 'video/vimeo';
+                                    const vInfo = isVid ? getVideoInfo(f.url) : null;
+                                    const thumbSrc = f.thumbnail || (vInfo?.type === 'youtube' ? vInfo.defaultThumb : null);
+
+                                    return (
+                                        <div key={i} className="card group cursor-pointer relative" onClick={() => setLb(i)}>
+                                            <div className="relative overflow-hidden" style={{ paddingTop: `${[75, 100, 60, 80, 120, 66][i % 6]}%` }}>
+                                                {isVid ? (
+                                                    <Fragment>
+                                                        {thumbSrc ? (
+                                                            <img src={thumbSrc} alt={f.name} className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" loading="lazy" />
+                                                        ) : vInfo?.type === 'video' ? (
+                                                            <video src={f.url} className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" muted preload="metadata" />
+                                                        ) : (
+                                                            <div className="absolute inset-0 bg-gradient-to-tr from-charcoal via-charcoal/90 to-pink-deep/40 flex items-center justify-center">
+                                                                <span className="text-white/40 text-sm font-mono">{f.name}</span>
+                                                            </div>
+                                                        )}
+                                                        {/* Luxury Play Icon Badge */}
+                                                        <div className="absolute top-3 right-3 z-10 w-9 h-9 rounded-full bg-black/60 backdrop-blur-md flex items-center justify-center text-white shadow-lg group-hover:scale-110 group-hover:bg-pink transition-all">
+                                                            <span className="text-xs ml-0.5">▶</span>
+                                                        </div>
+                                                    </Fragment>
+                                                ) : (
+                                                    <img src={f.url} alt={f.name} className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" loading="lazy" />
+                                                )}
+                                                <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 flex items-end p-4">
+                                                    <span className="text-xs text-white font-mono flex items-center gap-1.5 font-medium truncate">
+                                                        {isVid && <span className="text-pink">▶</span>}
+                                                        {f.name}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            {isAdmin && (
+                                                <div className="absolute top-2 left-2 z-10" onClick={e => e.stopPropagation()}>
+                                                    <select
+                                                        value={f.category || (isVid ? 'Reels' : 'Photos')}
+                                                        onChange={e => {
+                                                            const originalIdx = uploads.gallery.findIndex(item => item.url === f.url);
+                                                            if (originalIdx !== -1) {
+                                                                dispatch({ type: 'UPDATE_FILE_CATEGORY', cat: 'gallery', idx: originalIdx, category: e.target.value });
+                                                            }
+                                                        }}
+                                                        className="bg-white/95 backdrop-blur-md border border-black/10 rounded-full text-[10px] font-mono font-bold text-pink-deep px-3 py-1 shadow-md appearance-none cursor-pointer focus:outline-none pr-6"
+                                                        style={{
+                                                            backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%23E87DA3'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E")`,
+                                                            backgroundRepeat: 'no-repeat',
+                                                            backgroundPosition: 'right 6px center',
+                                                            backgroundSize: '10px'
+                                                        }}
+                                                        aria-label="Change category">
+                                                        {['Reels', 'Photos', 'Reviews', 'Tutorials'].map(catOption => (
+                                                            <option key={catOption} value={catOption}>{catOption}</option>
+                                                        ))}
+                                                    </select>
+                                                </div>
                                             )}
-                                            <div className="absolute inset-0 bg-gradient-to-t from-black/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 flex items-end p-4">
-                                                <span className="text-xs text-white font-mono">{f.name}</span>
-                                            </div>
+                                            {isAdmin && <button onClick={e => {
+                                                e.stopPropagation();
+                                                const originalIdx = uploads.gallery.findIndex(item => item.url === f.url);
+                                                if (originalIdx !== -1) {
+                                                    dispatch({ type: 'REMOVE_FILE', cat: 'gallery', idx: originalIdx });
+                                                }
+                                            }} className="absolute top-2 right-2 w-7 h-7 rounded-full bg-white/80 text-charcoal hover:bg-red-400 hover:text-white transition-all opacity-0 group-hover:opacity-100 flex items-center justify-center shadow" aria-label={`Remove ${f.name}`}><I.X /></button>}
                                         </div>
-                                        {isAdmin && (
-                                            <div className="absolute top-2 left-2 z-10" onClick={e => e.stopPropagation()}>
-                                                <select
-                                                    value={f.category || (f.type.startsWith('video/') ? 'Reels' : 'Photos')}
-                                                    onChange={e => {
-                                                        // Find actual index in original gallery array since i is of filtered list
-                                                        const originalIdx = uploads.gallery.findIndex(item => item.url === f.url);
-                                                        if (originalIdx !== -1) {
-                                                            dispatch({ type: 'UPDATE_FILE_CATEGORY', cat: 'gallery', idx: originalIdx, category: e.target.value });
-                                                        }
-                                                    }}
-                                                    className="bg-white/95 backdrop-blur-md border border-black/10 rounded-full text-[10px] font-mono font-bold text-pink-deep px-3 py-1 shadow-md appearance-none cursor-pointer focus:outline-none pr-6"
-                                                    style={{
-                                                        backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%23E87DA3'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E")`,
-                                                        backgroundRepeat: 'no-repeat',
-                                                        backgroundPosition: 'right 6px center',
-                                                        backgroundSize: '10px'
-                                                    }}
-                                                    aria-label="Change category">
-                                                    {['Reels', 'Photos', 'Reviews', 'Tutorials'].map(catOption => (
-                                                        <option key={catOption} value={catOption}>{catOption}</option>
-                                                    ))}
-                                                </select>
-                                            </div>
-                                        )}
-                                        {isAdmin && <button onClick={e => {
-                                            e.stopPropagation();
-                                            const originalIdx = uploads.gallery.findIndex(item => item.url === f.url);
-                                            if (originalIdx !== -1) {
-                                                dispatch({ type: 'REMOVE_FILE', cat: 'gallery', idx: originalIdx });
-                                            }
-                                        }} className="absolute top-2 right-2 w-7 h-7 rounded-full bg-white/80 text-charcoal hover:bg-red-400 hover:text-white transition-all opacity-0 group-hover:opacity-100 flex items-center justify-center shadow" aria-label={`Remove ${f.name}`}><I.X /></button>}
-                                    </div>
-                                ))}
+                                    );
+                                })}
                             </div>
-                        ) : <p className="text-center text-light-gray py-10">{isAdmin ? 'Upload your best content to build your portfolio.' : 'Content coming soon.'}</p>}
-                        {isAdmin && <div className="mt-12 max-w-xl mx-auto">
-                            <UploadZone multiple={true} label="Drag & drop files to build your portfolio" onFiles={f => {
-                                const withCat = f.map(file => ({
-                                    ...file,
-                                    category: file.type.startsWith('video/') ? 'Reels' : 'Photos'
-                                }));
-                                dispatch({ type: 'ADD_FILES', cat: 'gallery', files: withCat });
-                            }} />
-                        </div>}
+                        ) : <p className="text-center text-light-gray py-10">{isAdmin ? 'Upload or link your best content to build your portfolio.' : 'Content coming soon.'}</p>}
+
+                        {isAdmin && (
+                            <div className="mt-12 max-w-xl mx-auto space-y-4">
+                                <div className="p-4 bg-white rounded-2xl border border-pink/30 shadow-md flex flex-col sm:flex-row items-center justify-between gap-4">
+                                    <div>
+                                        <p className="text-xs font-bold text-charcoal flex items-center gap-1.5">
+                                            <span className="text-pink-deep text-sm">✦</span> Add Video Reels (Zero Size Limit)
+                                        </p>
+                                        <p className="text-[11px] text-warm-gray mt-0.5">Embed direct MP4, Cloudinary, YouTube Shorts, or Vimeo links</p>
+                                    </div>
+                                    <button
+                                        onClick={() => setShowVideoModal(true)}
+                                        className="btn-primary text-xs py-2.5 px-5 whitespace-nowrap shadow-md hover:scale-105 transition-transform flex items-center gap-2"
+                                    >
+                                        <span>▶</span> Add Video by URL
+                                    </button>
+                                </div>
+                                <UploadZone multiple={true} label="Or drag & drop local photo / short video files" onFiles={f => {
+                                    const withCat = f.map(file => ({
+                                        ...file,
+                                        category: file.type.startsWith('video/') ? 'Reels' : 'Photos'
+                                    }));
+                                    dispatch({ type: 'ADD_FILES', cat: 'gallery', files: withCat });
+                                }} />
+                            </div>
+                        )}
                     </div>
                     {/* Lightbox */}
-                    {lb !== null && files[lb] && (
-                        <div className="lightbox-overlay" onClick={() => setLb(null)}>
-                            <button onClick={e => { e.stopPropagation(); setLb(Math.max(0, lb - 1)) }} className="absolute left-4 md:left-8 text-white/60 hover:text-white transition-colors z-10" aria-label="Previous"><I.ChevL /></button>
-                            <div className="lightbox-media max-w-4xl max-h-[85vh] w-full px-4 flex flex-col items-center justify-center" onClick={e => e.stopPropagation()}>
-                                {files[lb].type.startsWith('video/') ? (
-                                    <video src={files[lb].url} controls autoPlay className="max-w-full max-h-[75vh] object-contain rounded-2xl shadow-2xl" />
-                                ) : (
-                                    <img src={files[lb].url} alt={files[lb].name} className="max-w-full max-h-[75vh] object-contain rounded-2xl shadow-2xl" />
-                                )}
-                                <p className="text-center text-sm text-white/60 font-mono mt-4">{lb + 1} / {files.length}</p>
+                    {lb !== null && files[lb] && (() => {
+                        const item = files[lb];
+                        const isVid = (item.type && item.type.startsWith('video/')) || (typeof item.url === 'string' && item.url.match(/\.(mp4|webm|mov|ogg)(\?.*)?$/i)) || item.type === 'video/youtube' || item.type === 'video/vimeo';
+                        const vInfo = isVid ? getVideoInfo(item.url) : null;
+
+                        return (
+                            <div className="lightbox-overlay" onClick={() => setLb(null)}>
+                                <button onClick={e => { e.stopPropagation(); setLb(Math.max(0, lb - 1)) }} className="absolute left-4 md:left-8 text-white/60 hover:text-white transition-colors z-10" aria-label="Previous"><I.ChevL /></button>
+                                <div className="lightbox-media max-w-4xl max-h-[85vh] w-full px-4 flex flex-col items-center justify-center" onClick={e => e.stopPropagation()}>
+                                    {isVid ? (
+                                        vInfo?.type === 'youtube' || vInfo?.type === 'vimeo' ? (
+                                            <div className="w-full aspect-video max-w-4xl max-h-[75vh] rounded-2xl overflow-hidden shadow-2xl bg-black">
+                                                <iframe
+                                                    src={vInfo.embedUrl}
+                                                    className="w-full h-full border-0"
+                                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                                    allowFullScreen
+                                                />
+                                            </div>
+                                        ) : (
+                                            <video src={item.url} controls autoPlay className="max-w-full max-h-[75vh] object-contain rounded-2xl shadow-2xl bg-black" />
+                                        )
+                                    ) : (
+                                        <img src={item.url} alt={item.name} className="max-w-full max-h-[75vh] object-contain rounded-2xl shadow-2xl" />
+                                    )}
+                                    <div className="text-center mt-4">
+                                        <p className="text-sm text-white font-medium">{item.name}</p>
+                                        <p className="text-xs text-white/60 font-mono mt-1">{lb + 1} / {files.length}</p>
+                                    </div>
+                                </div>
+                                <button onClick={e => { e.stopPropagation(); setLb(Math.min(files.length - 1, lb + 1)) }} className="absolute right-4 md:right-8 text-white/60 hover:text-white transition-colors z-10" aria-label="Next"><I.ChevR /></button>
                             </div>
-                            <button onClick={e => { e.stopPropagation(); setLb(Math.min(files.length - 1, lb + 1)) }} className="absolute right-4 md:right-8 text-white/60 hover:text-white transition-colors z-10" aria-label="Next"><I.ChevR /></button>
+                        );
+                    })()}
+
+                    {/* Add Video Modal */}
+                    {showVideoModal && (
+                        <div className="modal-overlay" onClick={() => setShowVideoModal(false)}>
+                            <div className="modal-panel p-8 max-w-lg w-full" onClick={e => e.stopPropagation()}>
+                                <div className="flex items-center justify-between mb-6">
+                                    <h3 className="font-display font-bold text-xl text-charcoal flex items-center gap-3">
+                                        <span className="w-10 h-10 rounded-full bg-pink-light flex items-center justify-center text-pink-deep text-lg">🎥</span>
+                                        Add Video by URL
+                                    </h3>
+                                    <button onClick={() => setShowVideoModal(false)} className="text-light-gray hover:text-charcoal transition-colors"><I.X /></button>
+                                </div>
+                                <p className="text-sm text-warm-gray mb-5">
+                                    Embed any direct video link (MP4, Cloudinary, Streamable) or YouTube / Shorts URL into your portfolio without any file size limits.
+                                </p>
+                                <form onSubmit={handleAddVideo} className="space-y-4">
+                                    <div>
+                                        <label className="text-xs font-mono text-light-gray uppercase tracking-wider mb-1.5 block">Video URL *</label>
+                                        <input
+                                            type="url"
+                                            required
+                                            className={`input-field ${videoError ? 'border-red-400' : ''}`}
+                                            placeholder="https://... (direct .mp4, Cloudinary, or YouTube link)"
+                                            value={videoForm.url}
+                                            onChange={e => { setVideoForm({ ...videoForm, url: e.target.value }); setVideoError(''); }}
+                                            autoFocus
+                                        />
+                                        {videoError && <p className="text-xs text-red-400 mt-1 font-medium">{videoError}</p>}
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-mono text-light-gray uppercase tracking-wider mb-1.5 block">Title / Project Name</label>
+                                        <input
+                                            type="text"
+                                            className="input-field"
+                                            placeholder="e.g., Dewy Skincare Routine Reel"
+                                            value={videoForm.title}
+                                            onChange={e => setVideoForm({ ...videoForm, title: e.target.value })}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-mono text-light-gray uppercase tracking-wider mb-1.5 block">Category</label>
+                                        <select
+                                            className="input-field cursor-pointer"
+                                            value={videoForm.category}
+                                            onChange={e => setVideoForm({ ...videoForm, category: e.target.value })}
+                                        >
+                                            <option value="Reels">Reels</option>
+                                            <option value="Reviews">Reviews</option>
+                                            <option value="Tutorials">Tutorials</option>
+                                            <option value="Photos">Photos</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-mono text-light-gray uppercase tracking-wider mb-1.5 block">Optional Poster / Cover Image URL</label>
+                                        <input
+                                            type="url"
+                                            className="input-field"
+                                            placeholder="https://... (leave blank for automatic preview)"
+                                            value={videoForm.thumbnail}
+                                            onChange={e => setVideoForm({ ...videoForm, thumbnail: e.target.value })}
+                                        />
+                                    </div>
+                                    <div className="flex gap-3 pt-3">
+                                        <button type="button" onClick={() => setShowVideoModal(false)} className="btn-outline flex-1 justify-center">Cancel</button>
+                                        <button type="submit" className="btn-primary flex-1 justify-center">Add to Portfolio</button>
+                                    </div>
+                                </form>
+                            </div>
                         </div>
                     )}
                 </section>
