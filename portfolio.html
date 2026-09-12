@@ -1258,6 +1258,7 @@
                     url: 'https://images.unsplash.com/photo-1526947425960-945c6e72858f?auto=format&fit=crop&w=800&q=80'
                 }
             ],
+            photoCategories: ['Lifestyle', 'Products', 'Behind the Scenes', 'Flat Lays'],
             packages: [
                 { id: 1, icon: 'Pkg', name: 'Starter', price: '$350', desc: 'Perfect for small brands starting with UGC', features: ['3 UGC Photos', '1 Short-Form Video', '1 Revision Round', 'Basic Usage Rights', '5-Day Delivery'] },
                 { id: 2, icon: 'Zap', name: 'Creator', price: '$750', pop: true, desc: 'Most popular for growing brands', features: ['8 UGC Photos', '3 Short-Form Videos', '2 Revision Rounds', 'Full Usage Rights', 'Concept Development', '3-Day Delivery', 'Raw Files Included'] },
@@ -1282,7 +1283,7 @@
         /* ====== STATE ====== */
         const reducer = (s, a) => {
             switch (a.type) {
-                case 'SET_STATE': return { ...DEFAULT_STATE, ...a.state, socials: { ...DEFAULT_STATE.socials, ...(a.state?.socials || {}) } };
+                case 'SET_STATE': return { ...DEFAULT_STATE, ...a.state, socials: { ...DEFAULT_STATE.socials, ...(a.state?.socials || {}) }, photoCategories: (a.state?.photoCategories && a.state.photoCategories.length > 0) ? a.state.photoCategories : DEFAULT_STATE.photoCategories };
                 case 'SET_BIO': return { ...s, bio: a.bio };
                 case 'SET_STATS': return { ...s, stats: a.stats };
                 case 'SET_SOCIALS': return { ...s, socials: a.socials };
@@ -1298,6 +1299,7 @@
                 case 'ADD_ITEM': return { ...s, [a.key]: [...(s[a.key] || []), a.item] };
                 case 'UPDATE_ITEM': return { ...s, [a.key]: (s[a.key] || []).map((it, i) => i === a.idx ? a.item : it) };
                 case 'REMOVE_ITEM': return { ...s, [a.key]: (s[a.key] || []).filter((_, i) => i !== a.idx) };
+                case 'SET_CATEGORIES': return { ...s, [a.key]: a.categories };
                 default: return s;
             }
         };
@@ -1912,9 +1914,47 @@
         function Photos({ uploads, dispatch, isAdmin }) {
             const [cat, setCat] = useState('All');
             const [lb, setLb] = useState(null);
-            const cats = ['All', 'Lifestyle', 'Products', 'Behind the Scenes', 'Flat Lays'];
+            const [showCatModal, setShowCatModal] = useState(false);
+            const [newCatName, setNewCatName] = useState('');
+            const [catError, setCatError] = useState('');
+
+            const rawCategories = uploads.photoCategories && uploads.photoCategories.length > 0
+                ? uploads.photoCategories
+                : ['Lifestyle', 'Products', 'Behind the Scenes', 'Flat Lays'];
+            const cats = ['All', ...rawCategories];
             const r = useReveal();
             const pics = (uploads.photos || []).filter(p => cat === 'All' || p.category === cat);
+
+            const handleAddCategory = () => {
+                const trimmed = newCatName.trim();
+                if (!trimmed) return;
+                if (trimmed.toLowerCase() === 'all') {
+                    setCatError('"All" is a reserved filter tab.');
+                    return;
+                }
+                if (rawCategories.some(c => c.toLowerCase() === trimmed.toLowerCase())) {
+                    setCatError('This category already exists.');
+                    return;
+                }
+                const updated = [...rawCategories, trimmed];
+                dispatch({ type: 'SET_CATEGORIES', key: 'photoCategories', categories: updated });
+                setNewCatName('');
+                setCatError('');
+                setCat(trimmed);
+            };
+
+            const handleRemoveCategory = (categoryToRemove) => {
+                if (rawCategories.length <= 1) {
+                    alert('You must have at least one category tag.');
+                    return;
+                }
+                if (confirm(`Remove category "${categoryToRemove}"? Photos with this tag will still be kept under "All".`)) {
+                    const updated = rawCategories.filter(c => c !== categoryToRemove);
+                    dispatch({ type: 'SET_CATEGORIES', key: 'photoCategories', categories: updated });
+                    if (cat === categoryToRemove) setCat('All');
+                }
+            };
+
             return (
                 <section id="photos" className="py-24 md:py-32 px-6 bg-white">
                     <div className="max-w-7xl mx-auto">
@@ -1923,8 +1963,38 @@
                             <h2 className="section-title text-3xl md:text-5xl mb-3">Visual <span className="text-gradient-pink">Stories</span></h2>
                             <p className="section-subtitle">Curated photos capturing the essence of brands and moments.</p>
                         </div>
-                        <div className="flex flex-wrap gap-3 mb-10">
-                            {cats.map(c => <button key={c} onClick={() => setCat(c)} className={`filter-chip ${cat === c ? 'active' : ''}`}>{c}</button>)}
+                        <div className="flex flex-wrap items-center gap-3 mb-10">
+                            {cats.map(c => {
+                                const isAll = c === 'All';
+                                return (
+                                    <div key={c} className="relative group/tag inline-flex items-center">
+                                        <button
+                                            onClick={() => setCat(c)}
+                                            className={`filter-chip ${cat === c ? 'active' : ''} ${isAdmin && !isAll ? 'pr-8' : ''}`}>
+                                            {c}
+                                        </button>
+                                        {isAdmin && !isAll && (
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleRemoveCategory(c);
+                                                }}
+                                                title={`Remove "${c}" category`}
+                                                className="absolute right-2.5 w-4 h-4 rounded-full bg-black/10 hover:bg-red-500 hover:text-white text-charcoal/60 text-[10px] font-bold flex items-center justify-center transition-all">
+                                                ✕
+                                            </button>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                            {isAdmin && (
+                                <button
+                                    onClick={() => { setShowCatModal(true); setCatError(''); setNewCatName(''); }}
+                                    className="px-4 py-2 rounded-full border border-dashed border-pink text-pink-deep hover:bg-pink-light/30 transition-all text-xs font-mono font-bold flex items-center gap-1.5 shadow-sm active:scale-95"
+                                    title="Add or manage category tags">
+                                    <span className="text-sm font-bold leading-none">+</span> Add Category
+                                </button>
+                            )}
                         </div>
                         {pics.length > 0 ? (
                             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
@@ -1935,7 +2005,7 @@
                                         {isAdmin && (
                                             <div className="absolute top-2 left-2 z-10" onClick={e => e.stopPropagation()}>
                                                 <select
-                                                    value={p.category || 'Lifestyle'}
+                                                    value={p.category || rawCategories[0] || 'Lifestyle'}
                                                     onChange={e => {
                                                         const originalIdx = uploads.photos.findIndex(item => item.url === p.url);
                                                         if (originalIdx !== -1) {
@@ -1950,7 +2020,7 @@
                                                         backgroundSize: '10px'
                                                     }}
                                                     aria-label="Change category">
-                                                    {['Lifestyle', 'Products', 'Behind the Scenes', 'Flat Lays'].map(catOption => (
+                                                    {rawCategories.map(catOption => (
                                                         <option key={catOption} value={catOption}>{catOption}</option>
                                                     ))}
                                                 </select>
@@ -1968,8 +2038,9 @@
                             </div>
                         ) : <p className="text-center text-light-gray py-8">{isAdmin ? 'Upload photos to showcase your visual portfolio.' : 'Photos coming soon.'}</p>}
                         {isAdmin && <div className="mt-12 max-w-xl mx-auto">
-                            <UploadZone multiple={true} label="Upload lifestyle, product, or BTS photos" onFiles={f => {
-                                const withCat = f.map(pic => ({ ...pic, category: 'Lifestyle' }));
+                            <UploadZone multiple={true} label="Upload photos for Visual Stories" onFiles={f => {
+                                const defaultCategory = cat !== 'All' ? cat : (rawCategories[0] || 'Lifestyle');
+                                const withCat = f.map(pic => ({ ...pic, category: defaultCategory }));
                                 dispatch({ type: 'ADD_FILES', cat: 'photos', files: withCat });
                             }} />
                         </div>}
@@ -1982,6 +2053,63 @@
                                 <p className="text-center text-xs text-white/60 font-mono mt-4">{lb + 1} / {pics.length}</p>
                             </div>
                             <button onClick={e => { e.stopPropagation(); setLb(Math.min(pics.length - 1, lb + 1)) }} className="absolute right-4 md:right-8 text-white/60 hover:text-white z-10" aria-label="Next"><I.ChevR /></button>
+                        </div>
+                    )}
+                    {/* Categories Management Modal */}
+                    {showCatModal && (
+                        <div className="modal-overlay" onClick={() => setShowCatModal(false)}>
+                            <div className="modal-panel p-8" onClick={e => e.stopPropagation()}>
+                                <div className="flex items-center justify-between mb-6">
+                                    <h3 className="font-display font-bold text-xl text-charcoal flex items-center gap-2.5">
+                                        <span className="w-8 h-8 rounded-full bg-pink-light flex items-center justify-center text-pink-deep text-sm">🏷️</span>
+                                        Manage Visual Stories Tags
+                                    </h3>
+                                    <button onClick={() => setShowCatModal(false)} className="text-light-gray hover:text-charcoal transition-colors" aria-label="Close"><I.X /></button>
+                                </div>
+                                <p className="text-sm text-warm-gray mb-6">Add, view, or remove the category tags used to filter and organize your Visual Stories photos.</p>
+                                
+                                <div className="mb-6">
+                                    <label className="text-xs font-mono text-light-gray uppercase tracking-wider mb-2 block font-semibold">Active Category Tags ({rawCategories.length})</label>
+                                    <div className="flex flex-wrap gap-2 p-3.5 bg-cream-dark/40 rounded-2xl border border-black/5">
+                                        {rawCategories.map(c => (
+                                            <span key={c} className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white text-xs font-mono font-semibold text-charcoal border border-black/5 shadow-sm">
+                                                {c}
+                                                <button
+                                                    onClick={() => handleRemoveCategory(c)}
+                                                    className="w-4 h-4 rounded-full bg-pink-light/80 hover:bg-red-500 hover:text-white text-pink-deep flex items-center justify-center text-[10px] font-bold transition-all"
+                                                    title={`Delete ${c}`}>
+                                                    ✕
+                                                </button>
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div className="space-y-3">
+                                    <label className="text-xs font-mono text-light-gray uppercase tracking-wider block font-semibold">Add New Category Tag</label>
+                                    <div className="flex gap-2">
+                                        <input
+                                            type="text"
+                                            className="input-field flex-1"
+                                            placeholder="e.g. Editorial, Fashion, Travel, Skincare..."
+                                            value={newCatName}
+                                            onChange={e => { setNewCatName(e.target.value); setCatError(''); }}
+                                            onKeyDown={e => { if (e.key === 'Enter') handleAddCategory(); }}
+                                            autoFocus
+                                        />
+                                        <button onClick={handleAddCategory} className="btn-primary shrink-0 px-5">
+                                            + Add Tag
+                                        </button>
+                                    </div>
+                                    {catError && <p className="text-xs text-red-500 font-medium">{catError}</p>}
+                                </div>
+
+                                <div className="mt-8 pt-4 border-t border-black/5 flex justify-end">
+                                    <button onClick={() => setShowCatModal(false)} className="px-6 py-2.5 rounded-full bg-charcoal text-white text-xs font-mono font-bold hover:bg-black transition-all">
+                                        Done
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     )}
                 </section>
@@ -2266,7 +2394,7 @@
             const ADMIN_PASS = 'priya2026';
 
             const [uploads, dispatch] = useReducer(reducer, {
-                bio: '', profilePhoto: [], deals: [], gallery: [], photos: [], socials: DEFAULT_STATE.socials
+                bio: '', profilePhoto: [], deals: [], gallery: [], photos: [], socials: DEFAULT_STATE.socials, photoCategories: DEFAULT_STATE.photoCategories
             });
             const isLoaded = useRef(false);
             const isRemoteUpdate = useRef(false);
