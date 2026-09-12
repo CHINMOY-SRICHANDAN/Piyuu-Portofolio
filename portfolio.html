@@ -1136,57 +1136,21 @@
         }
 
         function uploadFileToFirebase(file, onProgress) {
-            // If Storage bucket is available and enabled
-            if (firebaseStorage && firebaseConfig.storageBucket) {
-                try {
-                    const cleanName = (file.name || 'upload').replace(/[^a-zA-Z0-9._-]/g, '_');
-                    const fileRef = firebaseStorage.ref().child(`uploads/${Date.now()}_${cleanName}`);
-                    const uploadTask = fileRef.put(file);
-
-                    return new Promise((resolve) => {
-                        uploadTask.on(
-                            'state_changed',
-                            snapshot => {
-                                if (snapshot.totalBytes > 0 && onProgress) {
-                                    const pct = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-                                    onProgress(pct);
-                                }
-                            },
-                            error => {
-                                console.log("Storage bucket unavailable, using optimized in-database compression:", error.message || error);
-                                compressImage(file).then(resolve);
-                            },
-                            () => {
-                                uploadTask.snapshot.ref.getDownloadURL().then(downloadURL => {
-                                    resolve({
-                                        name: file.name,
-                                        size: file.size,
-                                        type: file.type,
-                                        url: downloadURL
-                                    });
-                                }).catch(() => compressImage(file).then(resolve));
-                            }
-                        );
-                    });
-                } catch (e) {
-                    return compressImage(file);
-                }
-            }
-
-            // High performance compressed fallback (100% free with Firestore)
-            if (onProgress) onProgress(100);
-            return compressImage(file);
+            if (onProgress) onProgress(50);
+            return compressImage(file).then(res => {
+                if (onProgress) onProgress(100);
+                return res;
+            });
         }
 
         function handleSinglePhotoUpload(file, cat, dispatch) {
             if (!file) return;
-            uploadFileToFirebase(file).then(item => {
-                dispatch({ type: 'ADD_FILES', cat, files: [item] });
+            compressImage(file).then(item => {
+                if (item && item.url) {
+                    dispatch({ type: 'ADD_FILES', cat, files: [item] });
+                }
             }).catch(err => {
                 console.error("Single photo upload error:", err);
-                compressImage(file).then(item => {
-                    dispatch({ type: 'ADD_FILES', cat, files: [item] });
-                });
             });
         }
 
