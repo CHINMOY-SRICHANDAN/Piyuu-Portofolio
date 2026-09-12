@@ -46,6 +46,10 @@
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Firebase SDK (Compat) -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
     <style>
         /* ===== BASE RESET ===== */
         *,
@@ -1016,6 +1020,136 @@
                 });
             }).catch(err => console.error('DB Clear error:', err));
         }
+
+        /* ====== FIREBASE CLOUD BACKEND ====== */
+        const firebaseConfig = {
+            apiKey: "AIzaSyBXDCMsJNMHi2T_E0oYG_rtmJV6Vy53BFc",
+            authDomain: "priya-portfolio-a16d3.firebaseapp.com",
+            projectId: "priya-portfolio-a16d3",
+            storageBucket: "priya-portfolio-a16d3.firebasestorage.app",
+            messagingSenderId: "97961760525",
+            appId: "1:97961760525:web:7d75b046fb91f51a728244",
+            measurementId: "G-NERT88KNEG"
+        };
+
+        let firestoreDb = null;
+        let firebaseStorage = null;
+
+        try {
+            if (typeof firebase !== 'undefined') {
+                if (!firebase.apps || !firebase.apps.length) {
+                    firebase.initializeApp(firebaseConfig);
+                }
+                firestoreDb = firebase.firestore();
+                firebaseStorage = firebase.storage();
+                window.firestoreDb = firestoreDb;
+                window.firebaseStorage = firebaseStorage;
+                console.log("Firebase initialized successfully for priya-portfolio-a16d3");
+            }
+        } catch (err) {
+            console.warn("Firebase initialization notice:", err);
+        }
+
+        const getPortfolioDoc = () => firestoreDb ? firestoreDb.collection('portfolio').doc('content') : null;
+
+        function loadCloudState() {
+            const docRef = getPortfolioDoc();
+            if (!docRef) return loadState();
+
+            return docRef.get().then(doc => {
+                if (doc.exists) {
+                    const data = doc.data();
+                    saveState(data).catch(() => {});
+                    return data;
+                } else {
+                    console.log("No cloud state found. Seeding initial portfolio to Firestore...");
+                    docRef.set(DEFAULT_STATE).catch(err => console.warn("Firestore seed notice:", err));
+                    return DEFAULT_STATE;
+                }
+            }).catch(err => {
+                console.warn("Could not load from Firestore, falling back to local storage:", err);
+                return loadState();
+            });
+        }
+
+        function saveCloudState(state) {
+            saveState(state); // always save locally in IndexedDB as fast offline cache
+            const docRef = getPortfolioDoc();
+            if (docRef) {
+                return docRef.set(state, { merge: true }).catch(err => {
+                    console.error("Firestore sync error:", err);
+                });
+            }
+        }
+
+        function clearCloudState() {
+            return clearState().then(() => {
+                const docRef = getPortfolioDoc();
+                if (docRef) {
+                    return docRef.set(DEFAULT_STATE);
+                }
+            });
+        }
+
+        function uploadFileToFirebase(file, onProgress) {
+            if (!firebaseStorage) {
+                return new Promise(resolve => {
+                    const r = new FileReader();
+                    r.onload = e => resolve({ name: file.name, size: file.size, type: file.type, url: e.target.result });
+                    r.readAsDataURL(file);
+                });
+            }
+
+            const cleanName = (file.name || 'upload').replace(/[^a-zA-Z0-9._-]/g, '_');
+            const fileRef = firebaseStorage.ref().child(`uploads/${Date.now()}_${cleanName}`);
+            const uploadTask = fileRef.put(file);
+
+            return new Promise((resolve) => {
+                uploadTask.on(
+                    'state_changed',
+                    snapshot => {
+                        if (snapshot.totalBytes > 0 && onProgress) {
+                            const pct = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+                            onProgress(pct);
+                        }
+                    },
+                    error => {
+                        console.warn("Firebase Storage upload fallback:", error);
+                        const r = new FileReader();
+                        r.onload = e => resolve({ name: file.name, size: file.size, type: file.type, url: e.target.result });
+                        r.readAsDataURL(file);
+                    },
+                    () => {
+                        uploadTask.snapshot.ref.getDownloadURL().then(downloadURL => {
+                            resolve({
+                                name: file.name,
+                                size: file.size,
+                                type: file.type,
+                                url: downloadURL
+                            });
+                        }).catch(err => {
+                            console.warn("Download URL error, falling back to local:", err);
+                            const r = new FileReader();
+                            r.onload = e => resolve({ name: file.name, size: file.size, type: file.type, url: e.target.result });
+                            r.readAsDataURL(file);
+                        });
+                    }
+                );
+            });
+        }
+
+        function handleSinglePhotoUpload(file, cat, dispatch) {
+            if (!file) return;
+            uploadFileToFirebase(file).then(item => {
+                dispatch({ type: 'ADD_FILES', cat, files: [item] });
+            }).catch(err => {
+                console.error("Single photo upload error:", err);
+                const r = new FileReader();
+                r.onload = ev => dispatch({ type: 'ADD_FILES', cat, files: [{ name: file.name, size: file.size, type: file.type, url: ev.target.result }] });
+                r.readAsDataURL(file);
+            });
+        }
+
         const INITIAL_PERSISTED_STATE = null; // EXPORT_STATE_PLACEHOLDER
         const DEFAULT_STATE = {
             bio: "I'm Priya — a Mumbai-based UGC creator & model with 4+ years in the creator economy. I craft authentic, scroll-stopping content that converts. From beauty unboxings to tech reviews, I blend editorial aesthetics with genuine storytelling, creating content that feels native to every platform and resonates with audiences.",
@@ -1188,28 +1322,33 @@
             const [uploading, setUploading] = useState(false);
             const [progress, setProgress] = useState(0);
             const inp = useRef(null);
-            const process = (fList) => {
+            const process = async (fList) => {
                 const ok = ['image/', 'video/'];
                 const files = Array.from(fList).filter(f => ok.some(t => f.type.startsWith(t)));
                 if (!files.length) return;
-                setUploading(true); setProgress(0);
-                let p = 0;
-                const iv = setInterval(() => {
-                    p += Math.random() * 25 + 12;
-                    if (p >= 100) { p = 100; clearInterval(iv); }
-                    setProgress(p);
-                    if (p >= 100) setTimeout(() => {
-                        const res = []; let done = 0;
-                        files.forEach(f => {
-                            const r = new FileReader();
-                            r.onload = e => {
-                                res.push({ name: f.name, size: f.size, type: f.type, url: e.target.result });
-                                if (++done === files.length) { onFiles(res); setUploading(false); setProgress(0); }
-                            };
-                            r.readAsDataURL(f);
+                setUploading(true); setProgress(5);
+                try {
+                    const totalFiles = files.length;
+                    const progressMap = {};
+                    const uploadPromises = files.map((f, idx) => {
+                        return uploadFileToFirebase(f, (pct) => {
+                            progressMap[idx] = pct;
+                            const totalPct = Object.values(progressMap).reduce((a, b) => a + b, 0) / totalFiles;
+                            setProgress(Math.min(99, Math.round(totalPct)));
                         });
-                    }, 250);
-                }, 100);
+                    });
+                    const results = await Promise.all(uploadPromises);
+                    setProgress(100);
+                    setTimeout(() => {
+                        onFiles(results);
+                        setUploading(false);
+                        setProgress(0);
+                    }, 300);
+                } catch (err) {
+                    console.error("Upload error:", err);
+                    setUploading(false);
+                    setProgress(0);
+                }
             };
             const circ = 2 * Math.PI * 26;
             return (
@@ -1232,7 +1371,7 @@
                         <Fragment>
                             <div className="w-12 h-12 rounded-full bg-pink-light flex items-center justify-center text-pink-deep"><I.Upload /></div>
                             <p className="text-sm text-warm-gray font-medium">{label || "Drag & drop or click to upload"}</p>
-                            <p className="text-xs text-light-gray font-mono">JPG, PNG, MP4 accepted</p>
+                            <p className="text-xs text-light-gray font-mono">JPG, PNG, MP4 accepted (Cloud Synced)</p>
                         </Fragment>
                     )}
                 </div>
@@ -1350,7 +1489,7 @@
                                             <div className="w-10 h-10 rounded-full bg-pink-light flex items-center justify-center text-pink-deep"><I.Upload /></div>
                                             <p className="text-xs text-warm-gray">Upload Photo</p>
                                             <input id="hero-upload" type="file" className="hidden" accept="image/*"
-                                                onChange={e => { if (e.target.files[0]) { const r = new FileReader(); r.onload = ev => dispatch({ type: 'ADD_FILES', cat: 'profilePhoto', files: [{ name: e.target.files[0].name, size: e.target.files[0].size, type: e.target.files[0].type, url: ev.target.result }] }); r.readAsDataURL(e.target.files[0]); } }} />
+                                                onChange={e => { if (e.target.files[0]) handleSinglePhotoUpload(e.target.files[0], 'profilePhoto', dispatch); }} />
                                         </div>
                                     ) : (
                                         <div className="w-full h-full bg-gradient-to-b from-cream-dark to-pink-light/30 flex items-center justify-center">
@@ -1378,7 +1517,7 @@
                                     <div className="w-10 h-10 rounded-full bg-pink-light flex items-center justify-center text-pink-deep"><I.Upload /></div>
                                     <p className="text-xs text-warm-gray">Upload Photo</p>
                                     <input id="hero-upload-m" type="file" className="hidden" accept="image/*"
-                                        onChange={e => { if (e.target.files[0]) { const r = new FileReader(); r.onload = ev => dispatch({ type: 'ADD_FILES', cat: 'profilePhoto', files: [{ name: e.target.files[0].name, size: e.target.files[0].size, type: e.target.files[0].type, url: ev.target.result }] }); r.readAsDataURL(e.target.files[0]); } }} />
+                                        onChange={e => { if (e.target.files[0]) handleSinglePhotoUpload(e.target.files[0], 'profilePhoto', dispatch); }} />
                                 </div>
                             ) : (
                                 <div className="w-full h-full bg-gradient-to-b from-cream-dark to-pink-light/30 flex items-center justify-center">
@@ -2119,14 +2258,17 @@
             const [showLogin, setShowLogin] = useState(false);
             const [loginPass, setLoginPass] = useState('');
             const [loginError, setLoginError] = useState(false);
+            const [syncStatus, setSyncStatus] = useState('connecting'); // 'connecting' | 'synced' | 'saving' | 'offline'
             const ADMIN_PASS = 'priya2026';
 
             const [uploads, dispatch] = useReducer(reducer, {
                 bio: '', profilePhoto: [], deals: [], gallery: [], photos: [], socials: DEFAULT_STATE.socials
             });
             const isLoaded = useRef(false);
+            const isRemoteUpdate = useRef(false);
+
             useEffect(() => {
-                loadState().then(saved => {
+                loadCloudState().then(saved => {
                     if (saved) {
                         dispatch({ type: 'SET_STATE', state: saved });
                     } else if (INITIAL_PERSISTED_STATE) {
@@ -2135,6 +2277,7 @@
                         dispatch({ type: 'SET_STATE', state: DEFAULT_STATE });
                     }
                     isLoaded.current = true;
+                    setSyncStatus('synced');
                     // Hide page loader with nice delay
                     const loader = document.querySelector('.page-loader');
                     if (loader) {
@@ -2143,13 +2286,43 @@
                     } else {
                         setLoading(false);
                     }
+                }).catch(err => {
+                    console.warn("Initial state load notice:", err);
+                    isLoaded.current = true;
+                    setSyncStatus('offline');
+                    setLoading(false);
                 });
+
+                // Real-time listener for multi-device sync
+                let unsubscribe = null;
+                const docRef = getPortfolioDoc();
+                if (docRef) {
+                    unsubscribe = docRef.onSnapshot(doc => {
+                        if (doc && doc.exists && !doc.metadata.hasPendingWrites) {
+                            const cloudData = doc.data();
+                            if (cloudData) {
+                                isRemoteUpdate.current = true;
+                                dispatch({ type: 'SET_STATE', state: cloudData });
+                                saveState(cloudData).catch(() => {});
+                                setTimeout(() => { isRemoteUpdate.current = false; }, 100);
+                            }
+                        }
+                    }, err => {
+                        console.warn("Firestore real-time listener notice:", err);
+                    });
+                }
+                return () => { if (unsubscribe) unsubscribe(); };
             }, []);
+
             useEffect(() => {
-                if (isLoaded.current) {
-                    saveState(uploads);
+                if (isLoaded.current && !isRemoteUpdate.current) {
+                    setSyncStatus('saving');
+                    saveCloudState(uploads);
+                    const t = setTimeout(() => setSyncStatus('synced'), 600);
+                    return () => clearTimeout(t);
                 }
             }, [uploads]);
+
             useEffect(() => {
                 const handler = (e) => {
                     if (e.ctrlKey && e.shiftKey && (e.key === 'A' || e.key === 'a')) {
@@ -2161,6 +2334,7 @@
                 window.addEventListener('keydown', handler);
                 return () => window.removeEventListener('keydown', handler);
             }, [isAdmin]);
+
             const handleLogin = () => {
                 if (loginPass === ADMIN_PASS) {
                     setIsAdmin(true); setShowLogin(false); setLoginPass(''); setLoginError(false);
@@ -2171,8 +2345,8 @@
                 else { setShowLogin(true); setLoginPass(''); setLoginError(false); }
             };
             const handleClearDB = () => {
-                if (confirm('Are you sure you want to reset all custom uploads and restore the default editorial template? This cannot be undone.')) {
-                    clearState().then(() => {
+                if (confirm('Are you sure you want to reset all custom uploads and restore the default editorial template? This will update both Cloud Firestore and local storage.')) {
+                    clearCloudState().then(() => {
                         dispatch({ type: 'SET_STATE', state: DEFAULT_STATE });
                     });
                 }
@@ -2222,6 +2396,13 @@
                             <div className="flex items-center gap-3">
                                 <span className="w-2.5 h-2.5 bg-green-500 rounded-full inline-block" style={{ animation: 'loaderPulse 1.5s ease-in-out infinite' }} />
                                 <span className="font-sans font-bold text-white/90">Priya Srivastava Admin Panel</span>
+                                <span className={`text-[10px] px-2.5 py-0.5 rounded-full uppercase tracking-wider font-semibold flex items-center gap-1 ${
+                                    syncStatus === 'synced' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' :
+                                    syncStatus === 'saving' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
+                                    'bg-sky-500/20 text-sky-300 border border-sky-500/30'
+                                }`}>
+                                    {syncStatus === 'synced' ? '☁️ Cloud Synced' : syncStatus === 'saving' ? '⚡ Saving...' : '☁️ Cloud Connected'}
+                                </span>
                             </div>
                             <div className="flex items-center gap-4">
                                 <button onClick={handleExport} className="bg-pink hover:bg-pink-deep text-white font-sans font-bold px-4 py-1.5 rounded-full transition-all flex items-center gap-1.5 shadow" title="Export this custom portfolio as a standalone index.html file ready for hosting">
